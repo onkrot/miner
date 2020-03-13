@@ -1,12 +1,14 @@
 use crossbeam::crossbeam_channel::unbounded;
 use crossbeam::scope;
-use ring::digest::{digest, Context, Digest, SHA256};
+use data_encoding::HEXLOWER;
+use reqwest;
+use ring::digest::{Context, SHA256};
+use serde_json::{Result, Value};
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write as IoWrite};
 use std::time::Instant;
-use std::io::Write as IoWrite;
-use reqwest;
+use std::path::Path;
 
 static URL: &str = "https://blockchain.info/unconfirmed-transactions?format=json";
 
@@ -31,39 +33,66 @@ fn first_zero(x: &[u8], n: usize) -> bool {
     }
 }
 
-async fn get_feed() -> String {
-    let body = reqwest::get("https://www.rust-lang.org")
-    .await?
-    .text()
-    .await?;
+fn get_transactions() -> std::result::Result<String, reqwest::Error> {
+    let body = reqwest::blocking::get(URL)?.text()?;
 
-    //resp.text().unwrap()
-    body
+    Ok(body)
 }
 
-fn write_tree(tree: &Vec<Vec<Digest>>) -> std::io::Result<()> {
+fn get_hashes(data: &str) -> Result<Vec<String>> {
+    let v: Value = serde_json::from_str(data)?;
+    let hashes: Vec<String> = v["txs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.get("hash").unwrap().as_str().unwrap().to_string())
+        .collect();
+
+    Ok(hashes)
+}
+
+fn write_tree(tree: &Vec<Vec<Vec<u8>>>) -> std::io::Result<()> {
     let mut file = File::create("output.txt").expect("kek");
-    fn pprint_tree(level: usize, num: usize, prefix: String, last:bool, tree: &Vec<Vec<Digest>>, file: &mut File) -> std::io::Result<()> {
+    fn pprint_tree(
+        level: usize,
+        num: usize,
+        prefix: String,
+        last: bool,
+        tree: &Vec<Vec<Vec<u8>>>,
+        file: &mut File,
+    ) -> std::io::Result<()> {
         let prefix_current = if last { "`- " } else { "|- " };
 
         write!(file, "{}{}0x", prefix, prefix_current)?;
-        for &byte in tree[level][num].as_ref() {
+        for byte in &tree[level][num] {
             write!(file, "{:02X}", byte)?;
         }
         writeln!(file)?;
 
-        let prefix_child =  if last { "   " } else { "|  " };
+        let prefix_child = if last { "   " } else { "|  " };
         let prefix = prefix + prefix_child;
 
         if level > 0 {
-            for i in num..=num+1 {
-                pprint_tree(level - 1, i,prefix.to_string(), i == num+1, tree, file).unwrap();
+            for i in num..=num + 1 {
+                pprint_tree(level - 1, i, prefix.to_string(), i == num + 1, tree, file).unwrap();
             }
         }
         Ok(())
     }
-
     pprint_tree(tree.len() - 1, 0, "".to_string(), true, tree, &mut file)
+}
+
+fn read_tx_from_file<P: AsRef<Path>>(path: P) -> Vec<Vec<u8>>{
+    let file = File::open(path).unwrap();
+    let lines: Vec<String> = io::BufReader::new(file)
+        .lines()
+        .map(|l| l.expect("no parse"))
+        .collect();
+    lines
+        .iter()
+        .skip(1)
+        .map(|line| HEXLOWER.decode(line.as_bytes()).unwrap())
+        .collect()
 }
 
 fn main() {
@@ -74,12 +103,15 @@ fn main() {
         .collect();
     let line1: Vec<&str> = lines[0].split_whitespace().collect();
     let n: usize = line1[0].parse().unwrap();
-    let level1: Vec<Digest> = lines
-        .iter()
-        .skip(1)
-        .map(|line| digest(&SHA256, line.as_bytes()))
-        .collect();
+    
+    let hashes = get_hashes(get_transactions().unwrap().as_str()).unwrap();
 
+    let level1: Vec<Vec<u8>> = get_hashes(get_transactions().unwrap().as_str())
+        .unwrap()
+        .iter()
+        .map(|st| HEXLOWER.decode(st.as_bytes()).unwrap())
+        .collect();
+    println!("level 1 {}", level1.len());
     let mut tree = Vec::new();
     tree.push(level1);
     let mut count = tree[0].len();
@@ -95,7 +127,7 @@ fn main() {
             let mut ctx = Context::new(&SHA256);
             ctx.update(tree[l][i].as_ref());
             ctx.update(tree[l][i + 1].as_ref());
-            tree[ln - 1].push(ctx.finish());
+            tree[ln - 1].push(ctx.finish().as_ref().to_vec());
         }
         count = tree[ln - 1].len();
     }
@@ -158,7 +190,7 @@ fn main() {
             n
         );
         write_tree(&tree).unwrap();
-        //write_tree(&tree);
+    //write_tree(&tree);
     } else {
         println!("no solution");
     }
