@@ -4,11 +4,10 @@ use data_encoding::HEXLOWER;
 use reqwest;
 use ring::digest::{Context, SHA256};
 use serde_json::{Result, Value};
-use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::io::{self, BufRead, Write as IoWrite};
-use std::time::Instant;
+use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::time::Instant;
 
 static URL: &str = "https://blockchain.info/unconfirmed-transactions?format=json";
 
@@ -62,19 +61,24 @@ fn write_tree(tree: &Vec<Vec<Vec<u8>>>) -> std::io::Result<()> {
         file: &mut File,
     ) -> std::io::Result<()> {
         let prefix_current = if last { "`- " } else { "|- " };
-
-        write!(file, "{}{}0x", prefix, prefix_current)?;
-        for byte in &tree[level][num] {
-            write!(file, "{:02X}", byte)?;
+        if num >= tree[level].len() {
+            return Ok(());
         }
-        writeln!(file)?;
+        writeln!(
+            file,
+            "{}{}0x{}",
+            prefix,
+            prefix_current,
+            HEXLOWER.encode(&tree[level][num].as_ref())
+        )?;
 
         let prefix_child = if last { "   " } else { "|  " };
         let prefix = prefix + prefix_child;
 
         if level > 0 {
-            for i in num..=num + 1 {
-                pprint_tree(level - 1, i, prefix.to_string(), i == num + 1, tree, file).unwrap();
+            let t = num * 2;
+            for i in t..=t + 1 {
+                pprint_tree(level - 1, i, prefix.to_string(), i == t + 1, tree, file).unwrap();
             }
         }
         Ok(())
@@ -82,7 +86,8 @@ fn write_tree(tree: &Vec<Vec<Vec<u8>>>) -> std::io::Result<()> {
     pprint_tree(tree.len() - 1, 0, "".to_string(), true, tree, &mut file)
 }
 
-fn read_tx_from_file<P: AsRef<Path>>(path: P) -> Vec<Vec<u8>>{
+#[allow(dead_code)]
+fn read_tx_from_file<P: AsRef<Path>>(path: P) -> Vec<Vec<u8>> {
     let file = File::open(path).unwrap();
     let lines: Vec<String> = io::BufReader::new(file)
         .lines()
@@ -103,15 +108,13 @@ fn main() {
         .collect();
     let line1: Vec<&str> = lines[0].split_whitespace().collect();
     let n: usize = line1[0].parse().unwrap();
-    
-    let hashes = get_hashes(get_transactions().unwrap().as_str()).unwrap();
 
     let level1: Vec<Vec<u8>> = get_hashes(get_transactions().unwrap().as_str())
         .unwrap()
         .iter()
         .map(|st| HEXLOWER.decode(st.as_bytes()).unwrap())
         .collect();
-    println!("level 1 {}", level1.len());
+
     let mut tree = Vec::new();
     tree.push(level1);
     let mut count = tree[0].len();
@@ -132,11 +135,12 @@ fn main() {
         count = tree[ln - 1].len();
     }
     let root = tree.last().unwrap()[0].as_ref();
-    let mut s = String::new();
-    for &byte in root {
-        write!(&mut s, "{:02X}", byte).expect("Unable to write");
-    }
-    println!("root hash {}  check {}", s, first_zero(root, n));
+
+    println!(
+        "root hash 0x{}  check {}",
+        HEXLOWER.encode(root),
+        first_zero(root, n)
+    );
 
     let now = Instant::now();
     let (s, r) = unbounded();
@@ -176,21 +180,16 @@ fn main() {
         ctx.update(&nonce.to_le_bytes());
         let curr = ctx.finish();
         println!("nonce {}", nonce);
-        let mut st = String::new();
-        for &byte in curr.as_ref() {
-            write!(&mut st, "{:02X}", byte).expect("Unable to write");
-        }
         println!();
         //let t = nonce as f64 / now.elapsed().as_millis() as f64 * 1000.0;
         println!("{}", first_zero(curr.as_ref(), n));
         println!(
-            "found hash {} took {}ms n:{}",
-            st,
+            "found hash 0x{} took {}ms n:{}",
+            HEXLOWER.encode(curr.as_ref()),
             now.elapsed().as_millis(),
             n
         );
         write_tree(&tree).unwrap();
-    //write_tree(&tree);
     } else {
         println!("no solution");
     }
