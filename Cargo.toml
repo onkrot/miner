@@ -1,0 +1,12 @@
+[package]
+name = "mine"
+version = "0.1.0"
+authors = ["onkrot <rtym@yandex.ru>"]
+edition = "2018"
+
+[dependencies]
+ring = "0.16.11"
+crossbeam = "0.7.3"
+reqwest = "0.10.4"
+serde = "1.0.104"
+serde_json = "1.0.48"
