@@ -1,15 +1,15 @@
+use crate::api::requests::{get_block, get_unconfirmed_tx};
 use crossbeam::crossbeam_channel::unbounded;
 use crossbeam::scope;
 use data_encoding::HEXLOWER;
-use reqwest;
 use ring::digest::{Context, SHA256};
-use serde_json::{Result, Value};
 use std::fs::File;
 use std::io::{self, BufRead, Write};
+use std::ops::Deref;
 use std::path::Path;
 use std::time::Instant;
 
-static URL: &str = "https://blockchain.info/unconfirmed-transactions?format=json";
+mod api;
 
 fn first_zero(x: &[u8], n: usize) -> bool {
     let k = n / 8;
@@ -30,24 +30,6 @@ fn first_zero(x: &[u8], n: usize) -> bool {
     } else {
         true
     }
-}
-
-fn get_transactions() -> std::result::Result<String, reqwest::Error> {
-    let body = reqwest::blocking::get(URL)?.text()?;
-
-    Ok(body)
-}
-
-fn get_hashes(data: &str) -> Result<Vec<String>> {
-    let v: Value = serde_json::from_str(data)?;
-    let hashes: Vec<String> = v["txs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|tx| tx.get("hash").unwrap().as_str().unwrap().to_string())
-        .collect();
-
-    Ok(hashes)
 }
 
 fn write_tree(tree: &Vec<Vec<Vec<u8>>>) -> std::io::Result<()> {
@@ -108,11 +90,11 @@ fn main() {
         .collect();
     let line1: Vec<&str> = lines[0].split_whitespace().collect();
     let n: usize = line1[0].parse().unwrap();
-
-    let level1: Vec<Vec<u8>> = get_hashes(get_transactions().unwrap().as_str())
+    let v = get_unconfirmed_tx(None);
+    let level1: Vec<Vec<u8>> = v
         .unwrap()
         .iter()
-        .map(|st| HEXLOWER.decode(st.as_bytes()).unwrap())
+        .map(|tx| HEXLOWER.decode(tx.hash.as_bytes()).unwrap())
         .collect();
 
     let mut tree = Vec::new();
